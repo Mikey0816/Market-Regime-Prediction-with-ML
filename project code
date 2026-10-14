@@ -183,7 +183,7 @@ plt.title("ROC Curve")
 plt.show()
 
 
-# Section 4 - Hyperparamter tuning of logistic regression model
+# Section 4 - Hyperparamter tuning of logistic regression model using pipeline and grid-search cross-validation
 
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
@@ -297,4 +297,74 @@ plt.title("ROC Curve - Tuned Logistic Regression")
 plt.show()
 
 
-# Section 6 - 
+# Section 6 - Training and testing random forest model, including hyperparameter tuning using grid-search cross-validation(no pipeline as scaling is not needed for random forest)
+
+rf_model = RandomForestClassifier(
+    random_state=42,
+    class_weight="balanced",
+    n_jobs=-1
+)
+
+rf_param_grid = {
+    "n_estimators": [100, 300],
+    "max_depth": [3, 5, 10],
+    "min_samples_leaf": [1, 5],
+    "max_features": ["sqrt"]
+}
+
+rf_grid = GridSearchCV(
+    estimator=rf_model,
+    param_grid=rf_param_grid,
+    cv=tscv,
+    scoring="roc_auc",
+    n_jobs=-1,
+    verbose=1
+)
+
+rf_grid.fit(X_train, y_train)
+
+best_rf = rf_grid.best_estimator_
+
+
+# Final test-set predictions
+y_pred_rf = best_rf.predict(X_test)
+y_prob_rf = best_rf.predict_proba(X_test)[:, 1]
+
+print("Best Random Forest Parameters:")
+print(rf_grid.best_params_)
+
+print("\nBest Cross-Validation ROC-AUC:")
+print(rf_grid.best_score_)
+
+
+# Section 7 - Displaying metrics and graphs for random forest model
+
+# Classification Report and Metrics for Random Forest
+
+print("\nRandom Forest Test Classification Report:")
+print(classification_report(y_test, y_pred_rf))
+
+rf_classification_metrics = get_classification_metrics(
+    "Random Forest",
+    y_test,
+    y_pred_rf,
+    y_prob_rf
+)
+
+rf_classification_metrics
+
+# Confusion Matrix and ROC Curve for Random Forest
+
+cm_rf = confusion_matrix(y_test, y_pred_rf)
+
+ConfusionMatrixDisplay(
+    confusion_matrix=cm_rf,
+    display_labels=["Bear", "Bull"]
+).plot()
+
+plt.title("Confusion Matrix - Random Forest")
+plt.show()
+
+RocCurveDisplay.from_predictions(y_test, y_prob_rf)
+plt.title("ROC Curve - Random Forest")
+plt.show()
