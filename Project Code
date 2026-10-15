@@ -1,7 +1,6 @@
 # Section 1 - Downloading yahoo finance data, creating new features, downloading new dataset
 
 # Install packages
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -367,4 +366,214 @@ plt.show()
 
 RocCurveDisplay.from_predictions(y_test, y_prob_rf)
 plt.title("ROC Curve - Random Forest")
+plt.show()
+
+
+# Section 8 - Helper functions for final statistics: calculating max drawdown, trading metrics for a specific model, and trading metrics for buy-and-hold strategy
+
+def calculate_max_drawdown(cumulative_returns):
+  running_max = cumulative_returns.cummax()
+  drawdown = (cumulative_returns / running_max) - 1
+  return drawdown.min()
+
+def backtest_strategy(test_data, prediction_col, strategy_name):
+  temp = test_data.copy()
+
+  # Daily SPY return
+  temp["market_return"] = temp["close"].pct_change().fillna(0)
+
+  # Shift signal by one day to avoid look-ahead bias.
+  # The model predicts the next-day regime, but the trading decision should not use future returns.
+  temp["strategy_signal"] = temp[prediction_col].shift(1).fillna(0)
+
+  # If signal is 1, hold SPY. If signal is 0, hold cash.
+  temp["strategy_return"] = temp["strategy_signal"] * temp["market_return"]
+
+  # Growth of $1
+  temp["cumulative_strategy"] = (1 + temp["strategy_return"]).cumprod()
+
+  total_return = temp["cumulative_strategy"].iloc[-1] - 1
+  annualized_return = temp["cumulative_strategy"].iloc[-1] ** (252 / len(temp)) - 1
+  annualized_volatility = temp["strategy_return"].std() * np.sqrt(252)
+
+  if temp["strategy_return"].std() != 0:
+    sharpe_ratio = (temp["strategy_return"].mean() / temp["strategy_return"].std()) * np.sqrt(252)
+  else:
+    sharpe_ratio = np.nan
+
+  max_drawdown = calculate_max_drawdown(temp["cumulative_strategy"])
+
+  metrics = {
+    "Model": strategy_name,
+    "Strategy Total Return": total_return,
+    "Strategy Annualized Return": annualized_return,
+    "Strategy Annualized Volatility": annualized_volatility,
+    "Strategy Sharpe Ratio": sharpe_ratio,
+    "Strategy Max Drawdown": max_drawdown
+  }
+
+  return metrics, temp["cumulative_strategy"]
+
+def buy_and_hold_metrics(test_data):
+  temp = test_data.copy()
+  temp["market_return"] = temp["close"].pct_change().fillna(0)
+  temp["cumulative_market"] = (1 + temp["market_return"]).cumprod()
+
+  total_return = temp["cumulative_market"].iloc[-1] - 1
+  annualized_return = temp["cumulative_market"].iloc[-1] ** (252 / len(temp)) - 1
+  annualized_volatility = temp["market_return"].std() * np.sqrt(252)
+
+  if temp["market_return"].std() != 0:
+    sharpe_ratio = (temp["market_return"].mean() / temp["market_return"].std()) * np.sqrt(252)
+  else:
+    sharpe_ratio = np.nan
+
+  max_drawdown = calculate_max_drawdown(temp["cumulative_market"])
+
+  metrics = {
+    "Model": "Buy-and-Hold SPY",
+    "Strategy Total Return": total_return,
+    "Strategy Annualized Return": annualized_return,
+    "Strategy Annualized Volatility": annualized_volatility,
+    "Strategy Sharpe Ratio": sharpe_ratio,
+    "Strategy Max Drawdown": max_drawdown
+  }
+
+  return metrics, temp["cumulative_market"]
+
+
+# Section 9 - Final statistics(comparing all strategies with each other)
+
+# Prepare prediction columns for every model
+final_test_df = test_df.copy()
+
+final_test_df["predicted_baseline_log_reg"] = y_pred
+final_test_df["predicted_tuned_log_reg"] = y_pred_log_reg_tuned
+final_test_df["predicted_random_forest"] = y_pred_rf
+
+# Classification metrics
+classification_results = pd.DataFrame([
+baseline_classification_metrics,
+log_reg_tuned_classification_metrics,
+rf_classification_metrics
+])
+
+# Trading metrics
+baseline_trading_metrics, baseline_equity = backtest_strategy(
+final_test_df,
+"predicted_baseline_log_reg",
+"Baseline Logistic Regression"
+)
+
+log_reg_trading_metrics, log_reg_equity = backtest_strategy(
+final_test_df,
+"predicted_tuned_log_reg",
+"Tuned Logistic Regression"
+)
+
+rf_trading_metrics, rf_equity = backtest_strategy(
+final_test_df,
+"predicted_random_forest",
+"Random Forest"
+)
+
+market_trading_metrics, market_equity = buy_and_hold_metrics(final_test_df)
+
+trading_results = pd.DataFrame([
+baseline_trading_metrics,
+log_reg_trading_metrics,
+rf_trading_metrics,
+market_trading_metrics
+])
+
+# Combine classification and trading metrics.
+# Buy-and-Hold does not have classification metrics, so those columns will be blank.
+final_results_table = pd.merge(
+trading_results,
+classification_results,
+on="Model",
+how="left"
+)
+
+# Reorder columns for readability
+final_results_table = final_results_table[
+[
+"Model",
+"Accuracy",
+"Balanced Accuracy",
+"Precision",
+"Recall",
+"F1 Score",
+"ROC-AUC",
+"Strategy Total Return",
+"Strategy Annualized Return",
+"Strategy Annualized Volatility",
+"Strategy Sharpe Ratio",
+"Strategy Max Drawdown"
+]
+]
+
+# Display a clean rounded table
+final_results_table_rounded = final_results_table.copy()
+
+percentage_cols = [
+"Accuracy",
+"Balanced Accuracy",
+"Precision",
+"Recall",
+"F1 Score",
+"ROC-AUC",
+"Strategy Total Return",
+"Strategy Annualized Return",
+"Strategy Annualized Volatility",
+"Strategy Max Drawdown"
+]
+
+for col in percentage_cols:
+  final_results_table_rounded[col] = final_results_table_rounded[col].apply(
+  lambda x: f"{x:.2%}" if pd.notnull(x) else ""
+)
+
+final_results_table_rounded["Strategy Sharpe Ratio"] = final_results_table_rounded["Strategy Sharpe Ratio"].apply(
+  lambda x: f"{x:.2f}" if pd.notnull(x) else ""
+)
+
+final_results_table_rounded
+
+# Equity curves/growth of $1 for all strategies
+
+equity_curves = pd.DataFrame({
+    "date": final_test_df["date"].values,
+    "Buy-and-Hold SPY": market_equity.values,
+    "Baseline Logistic Regression": baseline_equity.values,
+    "Tuned Logistic Regression": log_reg_equity.values,
+    "Random Forest": rf_equity.values
+})
+
+plt.figure(figsize=(14, 7))
+
+plt.plot(equity_curves["date"], equity_curves["Buy-and-Hold SPY"], label="Buy-and-Hold SPY")
+plt.plot(equity_curves["date"], equity_curves["Baseline Logistic Regression"], label="Baseline Logistic Regression Strategy")
+plt.plot(equity_curves["date"], equity_curves["Tuned Logistic Regression"], label="Tuned Logistic Regression Strategy")
+plt.plot(equity_curves["date"], equity_curves["Random Forest"], label="Random Forest Strategy")
+
+plt.title("Final Strategy Comparison: Machine Learning Models vs Buy-and-Hold SPY")
+plt.xlabel("Date")
+plt.ylabel("Growth of $1")
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.show()
+
+# Total Return Bar-Graph
+
+total_return_plot = final_results_table[["Model", "Strategy Total Return"]].copy()
+
+plt.figure(figsize=(10, 6))
+plt.bar(total_return_plot["Model"], total_return_plot["Strategy Total Return"])
+
+plt.title("Final Total Return Comparison")
+plt.xlabel("Model / Strategy")
+plt.ylabel("Total Return")
+plt.xticks(rotation=30, ha="right")
+plt.grid(True, axis="y", alpha=0.3)
 plt.show()
